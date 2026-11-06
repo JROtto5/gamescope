@@ -23,10 +23,14 @@ namespace gamescope::Process
 
     // Wait for all children to die,
     // but stop waiting if we hit a specific PID specified by onStopPid.
-    // Returns true if we stopped because we hit the pid specified by onStopPid.
+    // Returns true if we stopped because we hit the pid specified by onStopPid,
+    // and stores its wait status in pnStopPidStatus if given.
     //
     // Similar to what an `init` process would do.
-    bool WaitForAllChildren( std::optional<pid_t> onStopPid = std::nullopt );
+    bool WaitForAllChildren( std::optional<pid_t> onStopPid = std::nullopt, int *pnStopPidStatus = nullptr );
+
+    // Shell-style exit code for a waitpid status: the exit code, or 128 + N if killed by signal N.
+    int ExitCodeFromWaitStatus( int nStatus );
 
     bool CloseFd( int nFd );
 

@@ -130,10 +130,13 @@ namespace gamescope
 
         if ( nPrimaryChild > 0 )
         {
+            int nPrimaryChildStatus = 0;
+            bool bPrimaryChildReaped = false;
+
             // Wait for the primary child to die, then forward the death signal to
             // all of the other children, if we aren't in a PID namespace.
             if ( s_bRun )
-                Process::WaitForAllChildren( nPrimaryChild );
+                bPrimaryChildReaped = Process::WaitForAllChildren( nPrimaryChild, &nPrimaryChildStatus );
 
             if ( bRespawn )
             {
@@ -142,16 +145,20 @@ namespace gamescope
                     s_ReaperLog.infof( "\"%s\" process shut down. Restarting.", argv[ nSubCommandArgc ] );
 
                     nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ] );
+                    bPrimaryChildReaped = false;
                     if ( s_bRun )
-                        Process::WaitForAllChildren( nPrimaryChild );
+                        bPrimaryChildReaped = Process::WaitForAllChildren( nPrimaryChild, &nPrimaryChildStatus );
                 }
             }
 
             s_bRun = false;
             Process::KillAllChildren( getpid(), SIGTERM );
+            // A signal may have skipped the waits above; still pick up the primary child's status.
+            if ( !bPrimaryChildReaped )
+                Process::WaitForAllChildren( nPrimaryChild, &nPrimaryChildStatus );
             Process::WaitForAllChildren();
 
-            return 0;
+            return Process::ExitCodeFromWaitStatus( nPrimaryChildStatus );
         }
         else
         {

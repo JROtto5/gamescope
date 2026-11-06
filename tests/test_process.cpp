@@ -3,8 +3,10 @@
 #include <filesystem>
 #include <limits.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -222,4 +224,108 @@ TEST_CASE("GetAppIdFromReaper", "[process]") {
     SECTION("non-existent pid") {
         REQUIRE(gamescope::Process::GetAppIdFromReaper(std::numeric_limits<pid_t>::max()) == 0u);
     }
+}
+
+static int WaitStatusOf( void (*fnChild)() )
+{
+	pid_t nPid = fork();
+	REQUIRE( nPid >= 0 );
+	if ( nPid == 0 )
+		fnChild();
+
+	int nStatus = 0;
+	REQUIRE( gamescope::Process::WaitForAllChildren( nPid, &nStatus ) );
+	return nStatus;
+}
+
+TEST_CASE("ExitCodeFromWaitStatus", "[process]") {
+	SECTION("exit code is passed through") {
+		REQUIRE( gamescope::Process::ExitCodeFromWaitStatus( WaitStatusOf( []{ _exit( 0 ); } ) ) == 0 );
+		REQUIRE( gamescope::Process::ExitCodeFromWaitStatus( WaitStatusOf( []{ _exit( 7 ); } ) ) == 7 );
+	}
+	SECTION("killed by a signal gives 128 + the signal") {
+		REQUIRE( gamescope::Process::ExitCodeFromWaitStatus( WaitStatusOf( []{ signal( SIGTERM, SIG_DFL ); raise( SIGTERM ); _exit( 0 ); } ) ) == 128 + SIGTERM );
+		REQUIRE( gamescope::Process::ExitCodeFromWaitStatus( WaitStatusOf( []{ raise( SIGKILL ); _exit( 0 ); } ) ) == 128 + SIGKILL );
+	}
+}
+
+static int RunReaper( const char *pszCommand, bool bTerminateReaper = false )
+{
+	// tests/meson.build passes the built reaper; fall back to its place in the build tree.
+	std::string sReaper;
+	if ( const char *pszReaper = getenv( "GAMESCOPEREAPER" ) )
+		sReaper = pszReaper;
+	else
+	{
+		char buf[PATH_MAX];
+		ssize_t len = readlink( "/proc/self/exe", buf, sizeof( buf ) - 1 );
+		REQUIRE( len > 0 );
+		buf[len] = '\0';
+		sReaper = std::filesystem::path( buf ).parent_path().parent_path() / "src" / "gamescopereaper";
+	}
+
+	pid_t nPid = fork();
+	REQUIRE( nPid >= 0 );
+	if ( nPid == 0 )
+	{
+		if ( pszCommand )
+			execl( sReaper.c_str(), "gamescopereaper", "--", "sh", "-c", pszCommand, (char *)nullptr );
+		else
+			execl( sReaper.c_str(), "gamescopereaper", "--", "/nonexistent/gamescope-test-command", (char *)nullptr );
+		_exit( 255 );
+	}
+
+	if ( bTerminateReaper )
+	{
+		// Wait until the child has exec'd `sleep`: before exec it still has the reaper's
+		// SIGTERM handler, which would swallow the SIGTERM the reaper forwards.
+		std::string sChildren = "/proc/" + std::to_string( nPid ) + "/task/" + std::to_string( nPid ) + "/children";
+		bool bChildRunning = false;
+		for ( int i = 0; i < 500 && !bChildRunning; i++ )
+		{
+			pid_t nChild = 0;
+			if ( FILE *pChildren = fopen( sChildren.c_str(), "r" ) )
+			{
+				if ( fscanf( pChildren, "%d", &nChild ) != 1 )
+					nChild = 0;
+				fclose( pChildren );
+			}
+			char szComm[32] = {};
+			if ( nChild > 0 )
+			{
+				std::string sComm = "/proc/" + std::to_string( nChild ) + "/comm";
+				if ( FILE *pComm = fopen( sComm.c_str(), "r" ) )
+				{
+					if ( fgets( szComm, sizeof( szComm ), pComm ) )
+						bChildRunning = !strcmp( szComm, "sleep\n" );
+					fclose( pComm );
+				}
+			}
+			if ( !bChildRunning )
+				usleep( 10 * 1000 );
+		}
+		if ( !bChildRunning )
+		{
+			kill( nPid, SIGKILL );
+			waitpid( nPid, nullptr, 0 );
+		}
+		REQUIRE( bChildRunning );
+		kill( nPid, SIGTERM );
+	}
+
+	int nStatus = 0;
+	REQUIRE( waitpid( nPid, &nStatus, 0 ) == nPid );
+	REQUIRE( WIFEXITED( nStatus ) );
+	return WEXITSTATUS( nStatus );
+}
+
+TEST_CASE("gamescopereaper exits with its primary child's status", "[process]") {
+	REQUIRE( RunReaper( "exit 0" ) == 0 );
+	REQUIRE( RunReaper( "exit 7" ) == 7 );
+	REQUIRE( RunReaper( "kill -TERM $$" ) == 128 + SIGTERM );
+	REQUIRE( RunReaper( "kill -KILL $$" ) == 128 + SIGKILL );
+	// A command that can't be started gives 127, like a shell.
+	REQUIRE( RunReaper( nullptr ) == 127 );
+	// Terminating the reaper terminates the child, and the reaper reports how it died.
+	REQUIRE( RunReaper( "exec sleep 30", true ) == 128 + SIGTERM );
 }

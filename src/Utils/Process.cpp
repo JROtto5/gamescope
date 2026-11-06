@@ -197,7 +197,7 @@ namespace gamescope::Process
         }
     }
 
-    bool WaitForAllChildren( std::optional<pid_t> onStopPid )
+    bool WaitForAllChildren( std::optional<pid_t> onStopPid, int *pnStopPidStatus )
     {
         for ( ;; )
         {
@@ -205,11 +205,24 @@ namespace gamescope::Process
             pid_t nDeadChild = waitpid( -1, &nStatus, 0 );
 
             if ( onStopPid && nDeadChild == *onStopPid )
+            {
+                if ( pnStopPidStatus )
+                    *pnStopPidStatus = nStatus;
                 return true;
+            }
 
             if ( nDeadChild == -1 && errno == ECHILD )
                 return false;
         }
+    }
+
+    int ExitCodeFromWaitStatus( int nStatus )
+    {
+        if ( WIFEXITED( nStatus ) )
+            return WEXITSTATUS( nStatus );
+        if ( WIFSIGNALED( nStatus ) )
+            return 128 + WTERMSIG( nStatus );
+        return 1;
     }
 
     static std::optional<rlimit> g_oOriginalFDLimit{};
@@ -453,7 +466,7 @@ namespace gamescope::Process
                     {
                         s_ProcessLog.errorf_errno( "Failed to start process \"%s\"", argv[0] );
                     }
-                    _exit( 0 );
+                    _exit( 127 );
                 }
                 else if ( nGrandChild < 0 )
                 {
@@ -472,7 +485,7 @@ namespace gamescope::Process
                 {
                     s_ProcessLog.errorf_errno( "Failed to start process \"%s\"", argv[0] );
                 }
-                _exit( 0 );
+                _exit( 127 );
             }
         }
 

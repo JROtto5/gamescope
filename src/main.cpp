@@ -1123,6 +1123,8 @@ int main(int argc, char **argv)
 
 	gamescope::Process::KillAllChildren( getpid(), SIGTERM );
 	gamescope::Process::WaitForAllChildren();
+
+	return g_nPrimaryChildExitCode;
 }
 
 static void steamCompMgrThreadRun(int argc, char **argv)

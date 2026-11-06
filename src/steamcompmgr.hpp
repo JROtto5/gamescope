@@ -1,3 +1,4 @@
+#include <atomic>
 #include <stdint.h>
 
 #include "wlr_begin.hpp"
@@ -6,6 +7,7 @@
 #include <wlr/render/dmabuf.h>
 #include "wlr_end.hpp"
 
+extern std::atomic<int> g_nPrimaryChildExitCode;
 extern uint32_t currentOutputWidth;
 extern uint32_t currentOutputHeight;
 

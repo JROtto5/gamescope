@@ -7987,6 +7987,8 @@ error(Display *dpy, XErrorEvent *ev)
 void logind_sleep_stop();
 #endif
 
+std::atomic<int> g_nPrimaryChildExitCode{ 0 };
+
 static void
 steamcompmgr_exit(void)
 {
@@ -9959,7 +9961,11 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 		{
 			pthread_setname_np( pthread_self(), "gamescope-wait" );
 
-			gamescope::Process::WaitForChild( nPrimaryChildPid );
+			std::optional<int> oStatus = gamescope::Process::WaitForChild( nPrimaryChildPid );
+			// Only report the child's status if it exited on its own. Once gamescope is
+			// shutting down, the child is being killed by us, and main() may reap it first.
+			if ( oStatus && g_bRun )
+				g_nPrimaryChildExitCode = gamescope::Process::ExitCodeFromWaitStatus( *oStatus );
 			s_LaunchLogScope.infof( "Primary child shut down!" );
 
 			if ( cv_shutdown_on_primary_child_death )
